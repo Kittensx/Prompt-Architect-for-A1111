@@ -14,7 +14,7 @@ import lark
 
 schedule_parser = lark.Lark(r"""
 !start: (prompt | /[][():]/+)*
-prompt: (emphasized | scheduled | alternate | plain | WHITESPACE)*
+prompt: (emphasized | scheduled | grouped | alternate | plain | WHITESPACE)*
 !emphasized: "(" prompt ")"
         | "(" prompt ":" prompt ")"
         | "[" prompt "]"
