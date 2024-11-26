@@ -140,7 +140,8 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
 
         # Visit the tree and collect step intervals
         CollectSteps().visit(tree)
-        return sorted(set(res))  # Remove duplicates and sort
+        #return sorted(set(res))  # Remove duplicates and sort
+        return res #does not remove duplicates or sort them
 
 
     def at_step(step, tree):
