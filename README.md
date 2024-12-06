@@ -1,6 +1,6 @@
 # Prompt-Architect-for-A1111
 # Updated 12/6/2024
-## Each sequential folder adds a new function. The last "08_updated Sequence" changed a few things to properly address the new functions. Use that version to have the must up to date parse rules.
+## Each sequential folder adds a new function. The last "08_updated Sequence" changed a few things to properly address the new functions. Use that version to have the most up to date parse rules.
 ## The original first version has been renamed to "prompt_parser(version1).py"
 An advanced updated parser designed for A1111. provides advanced parsing and scheduling functionality for prompts in Stable Diffusion models
 
