@@ -146,6 +146,12 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
             #print("Invalid tree structure:", tree)
             #return []
         res = [steps]  # Always include the final step
+        def resolve_tree(tree):
+            """Recursively resolve a tree node to its final string representation."""
+            if isinstance(tree, lark.Tree):
+                # Recursively resolve each child
+                return "".join(resolve_tree(child) for child in tree.children)
+            return str(tree)
 
         class CollectSteps(lark.Visitor):
             def alternate1(self, tree):
