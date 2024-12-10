@@ -80,7 +80,7 @@ import random
 
 schedule_parser = lark.Lark(r"""
 !start: (prompt | /[][():]/+)*
-prompt: (emphasized | scheduled | grouped | alternate | alternate1 | sequence | plain | WHITESPACE)*
+prompt: (emphasized | scheduled | grouped | alternate | alternate1 | sequence |  plain | WHITESPACE)*
 
 !emphasized: "(" prompt ")"
         | "(" prompt ":" prompt ")"
@@ -88,11 +88,10 @@ prompt: (emphasized | scheduled | grouped | alternate | alternate1 | sequence | 
 scheduled: "[" [prompt (":" prompt)+] "]" ":" [WHITESPACE] NUMBER [WHITESPACE] //allows use of optional brackets to apply weights to phrases
 alternate: "[" prompt ("|" [prompt])+ "]"
 alternate1: prompt "|" prompt
-grouped: "{" (NUMBER_Q | prompt | sequence | grouped) (","| "|")?)+ "}" 
-
-sequence: prompt "::" (prompt (","|WHITESPACE)*)
+grouped: "{" ((NUMBER_Q | prompt | sequence | grouped) (","| "|")?)+ "}"
+sequence: prompt "::" (sequence | prompt (","|WHITESPACE)* (";" | "_;"))* "_;" /
 WHITESPACE: /\s+/
-plain: /([^\\\[\]():|]|\\.)+/
+plain: /([^\\\[\]():|_;]|\\.)+/
 %import common.SIGNED_NUMBER -> NUMBER // For weights and general numbers
 %import common.INT -> NUMBER_Q // For quantities
 
@@ -169,50 +168,35 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
                     if isinstance(child, lark.Tree):
                         descriptors.append(resolve_tree(child))
                     elif isinstance(child, str):
-                        descriptors.append(child.strip())
+                        descriptors.append(child.strip(" ;_;"))  # Strip trailing ; or _;
 
                 # Resolve the sequence by combining the described object and its attributes
                 combined_description = f"{described_object}: {', '.join(descriptors)}"
                 res.append(combined_description)
                
             def alternate1(self, tree):
-                # Randomly resolve `alternate1`
-                #options = [str(child) if not isinstance(child, lark.Tree) else resolve_tree(child) for child in tree.children]               
+                # Randomly resolve `alternate1`                           
                 options = [resolve_tree(child) for child in tree.children]
                 res.append(random.choice(options))  # Random choice from options
                 
             
             def grouped(self,tree):
-                # Collect all descriptions within the group       
-                ##group_descriptions = [
-                    ##self._resolve_tree(child) if isinstance(child, lark.Tree) else str(child) 
-                    ##for child in tree.children]
-                
-                #print(f"Group: {group_descriptions}") #debug
-                
-                # Handle the group as a cohesive unit (e.g., append to results)               
-                ##res.append(", ".join(group_descriptions))
+                # Collect all descriptions within the group                       
                 group_descriptions = [
                     resolve_tree(child) if isinstance(child, lark.Tree) else str(child)
                     for child in tree.children
                 ]
                 res.append(", ".join(group_descriptions))
                 
-            def scheduled(self, tree):
-                #Validate tree.children #debug
-                if not hasattr(tree, "children") or not tree.children:
-                    #print("Invalid tree or missing children:", tree) #debug
+            def scheduled(self, tree):                
+                if not hasattr(tree, "children") or not tree.children:                    
                     return
                     
                 # Collect all prompts and the scheduling number
                 prompts = tree.children[:-2]  # All but the last two children are options
                 number_node = tree.children[-2]  # Second-to-last child is the scheduling number
 
-                # Debugging: Inspect tree structure
-                #print("Scheduled Node:", tree.pretty())
-                #print("Prompts:", prompts)
-                #print("Number Node:", number_node)
-
+                
                 # Safeguard for missing or invalid children
                 if not prompts or not number_node:
                     #print("Invalid scheduled node structure:", tree) #debug
@@ -258,6 +242,11 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
                 # Combine the described object and descriptors into a single description
                 described_object = args[0]
                 descriptors = ", ".join(args[1:])
+                for desc in args[1:]:
+                    if isinstance(desc, str):
+                        descriptors.append(desc.strip(" ;_;"))  # Remove trailing ; or _;
+
+                # Join descriptors and return the final sequence
                 return f"{described_object}: {descriptors}"
                 
             def alternate1(self, args):
