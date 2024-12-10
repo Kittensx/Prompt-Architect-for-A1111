@@ -1,0 +1,2 @@
+{mountain|lake|forest},
+Steps: 30, Sampler: DPM++ 2M, Schedule type: Karras Exponential, CFG scale: 7, Seed: 26067899194, Size: 768x512, Model hash: 7be8cfbcd2, Model: FusionX-Realistic_v3_float16, Denoising strength: 0.7, Clip skip: 2, Hypertile U-Net: True, Hires upscale: 2, Hires steps: 30, Hires upscaler: R-ESRGAN 4x+ Anime6B, Version: v1.10.1, Hashes: {"model": "7be8cfbcd2"}
