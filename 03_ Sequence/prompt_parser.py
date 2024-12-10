@@ -88,13 +88,11 @@ prompt: (emphasized | scheduled | grouped | alternate | alternate1 | sequence | 
 scheduled: "[" [prompt (":" prompt)+] "]" ":" [WHITESPACE] NUMBER [WHITESPACE] //allows use of optional brackets to apply weights to phrases
 alternate: "[" prompt ("|" [prompt])+ "]"
 alternate1: prompt "|" prompt
-grouped: "{" ((NUMBER_Q | prompt | sequence | grouped) (","| "|")?)+ "}"
-sequence: prompt "::" (sequence | prompt (","|WHITESPACE)* (";" | "_;"))* "_;" /
+grouped: "{" ((prompt | sequence | grouped) (","| "|")?)+ "}"
+sequence: prompt "::" (sequence | prompt (","|WHITESPACE)* (";" | "_;"))* "_;" 
 WHITESPACE: /\s+/
 plain: /([^\\\[\]():|_;]|\\.)+/
 %import common.SIGNED_NUMBER -> NUMBER // For weights and general numbers
-%import common.INT -> NUMBER_Q // For quantities
-
 """)
 
 
