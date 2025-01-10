@@ -1,4 +1,7 @@
 # Prompt-Architect-for-A1111
+# Updated 1/10/2025
+## Forge - rename the file to "prompt_parser" full file is "prompt_parser.py" and place in your modules folder.
+## A1111 - rename the file to "prompt_parser" full file is "prompt_parser.py" and place in your modules folder.
 # Updated 12/6/2024
 ## Each sequential folder adds a new function. The last "08_updated Sequence" changed a few things to properly address the new functions. Use that version to have the most up to date parse rules.
 ## The original first version has been renamed to "prompt_parser(version1).py"
