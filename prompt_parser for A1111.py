@@ -76,13 +76,27 @@ import random
 #   - "fantasy landscape with a lake and stormclouds"
 #
 # This flexible system enables dynamic generation of diverse and varied prompts for creative tasks.
-# Sequence example:   
-#  person:: white hair:: long:: slightly wavy; green eyes:: scelera shaped like a heart;_;
-# Resolved output: person: white hair: long: slightly wavy; green eyes: scelera shaped like a heart
-# nested sequences must be implicitly closed with "~" and the last "!" closes the entire sequence. sequence starts with "::" and ends with "~" or "!"
-# A sequence starts with "::" and ends with "!" 
-# It may contain nested sequences or regular prompts.
-# A nested sequence starts with "::" and ends with "~" or "!"
+# Sequence example:   outfit::red_dress!, accessories::diamond_necklace!, appearance::ponytail, blonde hair,green eyes!, dark background, professional lighting,
+#Expected Output: 
+#  outfit: red_dress
+#  accessories: diamond_necklace
+#  appearance: ponytail, blonde hair, green eyes
+#  dark background, professional lighting  #last two elements lack explicit structure so they could be influenced more by previous elements)
+
+#Sequence with top_level_sequence example: character:::outfit::red_dress!, accessories::diamond_necklace!, appearance::ponytail, blonde hair,green eyes!!, dark background, professional lighting,
+#Expected Output:
+#character:
+#  - outfit: red_dress
+#  - accessories: diamond_necklace
+#  - appearance: ponytail, blonde hair, green eyes
+#[END character sequence]
+# dark background, professional lighting # last 2 sequence elements should be less influenced since the previous was explictly closed. Character attributes are fully grouped inside character::: and remain isolated from other aspects.
+#Final Summary
+#Use :: when defining individual properties without a main owner. Close with "~" or "!". Nested sequences should be closed with "!"
+#Use ::: when defining a complex entity (e.g., character) and want to group everything under it.
+#Use !! to fully close a top-level sequence before defining unrelated elements.
+# Sequences can contain nested sequences, and to close a sequence, should close nested sequences under it with "!"
+
 
 schedule_parser = lark.Lark(r"""
 !start: (prompt | /[][():]/+)*
