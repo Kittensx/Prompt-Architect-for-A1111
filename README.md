@@ -1,3 +1,18 @@
+# Bug Fix 7/18/2025
+A bug was found and reported and fixed. 
+A check inside this block was added to check for number node and resolve it to ta tree if it was needed. Before we just tried doing v=float(number_node) without first extracting it.
+
+###### Convert number_node to a float (scheduling weight or total steps percentage)
+                try:
+                    # Ensure we extract a leaf if it's a Tree
+                    if isinstance(number_node, lark.Tree):
+                        number_node = resolve_tree(number_node)
+
+                    v = float(number_node)
+                except ValueError:
+                    return
+            
+
 # Prompt-Architect-for-A1111
 # Updated 1/10/2025
 ## Forge - rename the file to "prompt_parser" full file is "prompt_parser.py" and place in your modules folder.
