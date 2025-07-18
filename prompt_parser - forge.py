@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from __future__ import annotations
 import re
 from collections import namedtuple
 import lark
@@ -256,6 +256,10 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
 
                 # Convert number_node to a float (scheduling weight or total steps percentage)
                 try:
+                    # Ensure we extract a leaf if it's a Tree
+                    if isinstance(number_node, lark.Tree):
+                        number_node = resolve_tree(number_node)
+                
                     v = float(number_node)
                 except ValueError:
                     return
