@@ -1,0 +1,32 @@
+# prompt_symbols.yaml
+
+reserved_symbols:
+  semantic_prompt: "%%"
+
+backend_symbols:
+  chunk: "&&"
+  blend: "<+>"
+  morph: ">>"
+  assemble: "@@"
+  bind: "=>"
+  pool: "$$"
+
+backend_wrappers:
+  open: "("
+  close: ")"
+
+sequence_symbols:
+  group_open: "{"
+  group_close: "}"
+
+  # property sequence
+  sequence: "::"
+
+  # top-level ownership/grouping sequence
+  deep_sequence: ":::"
+
+  # closes current sequence
+  close: "!"
+
+  # fully closes top-level sequence
+  top_close: "!!"
