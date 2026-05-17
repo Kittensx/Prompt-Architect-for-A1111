@@ -37,19 +37,7 @@ The system allows:
 
 You have TWO possible setups:
 
-## Option A — Separate Parsers
-
-Use either:
-
-- Original A1111 parser
-OR
-- Prompt Parser 21
-
-Only one parser path is active at a time.
-
----
-
-## Option B — Combined Dispatcher (Recommended)
+## Combined Dispatcher 
 
 Use:
 
@@ -84,6 +72,8 @@ prompt_dispatcher.py
 prompt_combined_dispatcher.py
 prompt_symbol_interpreter.py
 prompt_symbols.yaml
+...
+*all files in this folder*
 ```
 
 ---
@@ -96,16 +86,16 @@ You must modify imports inside the following files:
 modules/ui.py
 modules/sd_hijack_clip.py
 modules/sd_samplers_cfg_denoiser.py
+modules/processing.py
 ```
 
----
 
 # sd_hijack_clip.py
 
 Find the existing import:
 
 ```python
-from modules import prompt_parser
+from modules import prompt_parser, 
 ```
 
 Replace it with:
@@ -122,7 +112,7 @@ from modules import devices, sd_hijack, sd_emphasis
 Find the existing import:
 
 ```python
-from modules import prompt_parser
+from modules import prompt_parser,
 ```
 
 Replace it with:
@@ -147,7 +137,21 @@ Replace it with:
 ```python
 from modules import prompt_combined_dispatcher as prompt_parser
 ```
+---
 
+# processing.py
+---
+Find the existing import:
+
+```python
+from modules import prompt_parser, 
+```
+Replace it with:
+
+```python
+from modules import prompt_combined_dispatcher as prompt_parser
+```
+---
 ---
 
 # Step 3 — Restart A1111
@@ -187,16 +191,6 @@ forest CHUNK{wolves | moonlight}
 
 ---
 
-## prompt_dispatcher.py
-
-Routes prompts between:
-
-- Original A1111 parser
-- Parser 21
-
-based on detected syntax.
-
----
 
 ## prompt_combined_dispatcher.py
 
@@ -207,7 +201,6 @@ Extended dispatcher that:
 - Preserves compatibility with existing A1111 calls
 - Automatically selects backend logic
 
-This is the recommended dispatcher.
 
 ---
 
