@@ -5,39 +5,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from copy import deepcopy
 
+from modules.prompt_symbol_defaults import DEFAULT_SYMBOL_CONFIG
 
 try:
     import yaml
 except ImportError:
     yaml = None
-
-
-DEFAULT_SYMBOL_CONFIG = {
-    "reserved_symbols": {
-        "semantic_prompt": "%%",
-    },
-    "backend_symbols": {
-        "chunk": "&&",
-        "blend": "<+>",
-        "morph": ">>",
-        "assemble": "@@",
-        "bind": "=>",
-        "pool": "$$",
-    },
-    "sequence_symbols": {
-        "group_open": "{",
-        "group_close": "}",
-        "sequence": "::",
-        "deep_sequence": ":::",
-        "close": "!",
-        "top_close": "!!",
-    },
-    "backend_wrappers": {
-        "open": "(",
-        "close": ")",
-    },
-}
 
 
 CANONICAL_BACKEND = {
@@ -50,26 +25,50 @@ CANONICAL_BACKEND = {
 }
 
 
-@dataclass
-class PromptSymbolConfig:
-    reserved_symbols: dict[str, str] = field(default_factory=dict)
-    backend_symbols: dict[str, str] = field(default_factory=dict)
-    sequence_symbols: dict[str, str] = field(default_factory=dict)
-    backend_wrappers: dict[str, str] = field(default_factory=dict)
+@dataclass(slots=True)
+class OperatorSpec:
+    canonical: str
+    default_symbol: str
+    aliases: list[str] = field(default_factory=list)
 
     @classmethod
-    def default(cls) -> "PromptSymbolConfig":
-        return cls.from_dict(DEFAULT_SYMBOL_CONFIG)
+    def from_dict(cls, name: str, data: dict[str, Any]) -> "OperatorSpec":
+        canonical = str(data.get("canonical", "")).strip()
+        default_symbol = str(data.get("default_symbol", "")).strip()
+        aliases = [str(item) for item in data.get("aliases", []) if str(item)]
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "PromptSymbolConfig":
-        merged = _deep_merge(DEFAULT_SYMBOL_CONFIG, data or {})
+        if not canonical:
+            raise ValueError(f"{name}.canonical must be set.")
+
+        if not default_symbol:
+            raise ValueError(f"{name}.default_symbol must be set.")
+
+        if default_symbol not in aliases:
+            aliases.insert(0, default_symbol)
+
+        if canonical not in aliases:
+            aliases.append(canonical)
+
         return cls(
-            reserved_symbols=dict(merged.get("reserved_symbols", {})),
-            backend_symbols=dict(merged.get("backend_symbols", {})),
-            sequence_symbols=dict(merged.get("sequence_symbols", {})),
-            backend_wrappers=dict(merged.get("backend_wrappers", {})),
+            canonical=canonical,
+            default_symbol=default_symbol,
+            aliases=aliases,
         )
+
+
+@dataclass(slots=True)
+class PromptSymbolConfig:
+    version: int = 2
+    reserved_symbols: dict[str, OperatorSpec] = field(default_factory=dict)
+    backend_operators: dict[str, OperatorSpec] = field(default_factory=dict)
+    sequence_operators: dict[str, OperatorSpec] = field(default_factory=dict)
+    grouping_operators: dict[str, OperatorSpec] = field(default_factory=dict)
+    branch_operators: dict[str, OperatorSpec] = field(default_factory=dict)
+    weight_operators: dict[str, OperatorSpec] = field(default_factory=dict)
+    transition_operators: dict[str, OperatorSpec] = field(default_factory=dict)
+    escaping: dict[str, Any] = field(default_factory=dict)
+    serialization: dict[str, Any] = field(default_factory=dict)
+    validation: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "PromptSymbolConfig":
@@ -80,54 +79,120 @@ class PromptSymbolConfig:
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
-        return cls.from_dict(data)
+        merged = _deep_merge_dicts(DEFAULT_SYMBOL_CONFIG, data)
+        merged = _apply_user_alias_priority(merged, data)
+        return cls.from_dict(merged)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "PromptSymbolConfig":
+        if not isinstance(data, dict):
+            raise ValueError("Prompt symbol config must be a dictionary.")
+
+        version = int(data.get("version", 2))
+        if version != 2:
+            raise ValueError("Only prompt_symbols.yaml version 2 is supported.")
+
+        config = cls(
+            version=version,
+            reserved_symbols=_parse_operator_section(data, "reserved_symbols"),
+            backend_operators=_parse_operator_section(data, "backend_operators"),
+            sequence_operators=_parse_operator_section(data, "sequence_operators"),
+            grouping_operators=_parse_operator_section(data, "grouping_operators"),
+            branch_operators=_parse_operator_section(data, "branch_operators"),
+            weight_operators=_parse_operator_section(data, "weight_operators"),
+            transition_operators=_parse_operator_section(data, "transition_operators"),
+            escaping=dict(data.get("escaping", {})),
+            serialization=dict(data.get("serialization", {})),
+            validation=dict(data.get("validation", {})),
+        )
+
+        config.validate()
+        return config
+
+    @classmethod
+    def default(cls) -> "PromptSymbolConfig":
+        return cls.from_dict(DEFAULT_SYMBOL_CONFIG)
 
     def validate(self) -> None:
-        used: dict[str, str] = {}
+        allow_alias_collisions = bool(
+            self.validation.get("allow_alias_collisions", False)
+        )
+        allow_reserved_override = bool(
+            self.validation.get("allow_reserved_symbol_override", False)
+        )
 
-        for section_name, section in {
+        reserved_aliases: dict[str, str] = {}
+        used_aliases: dict[str, str] = {}
+
+        for group_name, section in self._all_sections().items():
+            for op_name, spec in section.items():
+                if not spec.aliases:
+                    raise ValueError(f"{group_name}.{op_name}.aliases cannot be empty.")
+
+                for alias in spec.aliases:
+                    if not alias:
+                        raise ValueError(f"{group_name}.{op_name} has an empty alias.")
+
+                    full_name = f"{group_name}.{op_name}"
+
+                    if group_name == "reserved_symbols":
+                        reserved_aliases[alias] = full_name
+                        continue
+
+                    if alias in reserved_aliases and not allow_reserved_override:
+                        raise ValueError(
+                            f"{full_name} alias {alias!r} conflicts with reserved "
+                            f"symbol {reserved_aliases[alias]}."
+                        )
+
+                    if alias in used_aliases and not allow_alias_collisions:
+                        raise ValueError(
+                            f"Alias collision: {full_name} uses {alias!r}, "
+                            f"already used by {used_aliases[alias]}."
+                        )
+
+                    used_aliases[alias] = full_name
+
+    def _all_sections(self) -> dict[str, dict[str, OperatorSpec]]:
+        return {
             "reserved_symbols": self.reserved_symbols,
-            "backend_symbols": self.backend_symbols,
-            "sequence_symbols": self.sequence_symbols,
-        }.items():
-            for name, symbol in section.items():
-                if not isinstance(symbol, str) or symbol == "":
-                    raise ValueError(f"{section_name}.{name} must be a non-empty string.")
+            "backend_operators": self.backend_operators,
+            "sequence_operators": self.sequence_operators,
+            "grouping_operators": self.grouping_operators,
+            "branch_operators": self.branch_operators,
+            "weight_operators": self.weight_operators,
+            "transition_operators": self.transition_operators,
+        }
 
-                if symbol in used:
-                    raise ValueError(
-                        f"Symbol collision: {section_name}.{name} uses {symbol!r}, "
-                        f"already used by {used[symbol]}."
-                    )
+    def backend_aliases(self, key: str) -> list[str]:
+        spec = self.backend_operators.get(key)
+        return list(spec.aliases) if spec else []
 
-                used[symbol] = f"{section_name}.{name}"
+    def backend_canonical(self, key: str) -> str:
+        spec = self.backend_operators.get(key)
+        if spec:
+            return spec.canonical
+        return CANONICAL_BACKEND[key]
 
-        semantic_symbol = self.reserved_symbols.get("semantic_prompt")
-        if semantic_symbol:
-            for name, symbol in self.backend_symbols.items():
-                if symbol == semantic_symbol:
-                    raise ValueError(
-                        f"Backend symbol {name!r} cannot use reserved semantic_prompt symbol "
-                        f"{semantic_symbol!r}."
-                    )
+    def wrapper_open(self) -> str:
+        return self.grouping_operators["open_attention"].default_symbol
+
+    def wrapper_close(self) -> str:
+        return self.grouping_operators["close_attention"].default_symbol
 
 
 class PromptSymbolInterpreter:
     """
-    Converts user-facing prompt symbols into canonical parser syntax.
+    Converts user-facing aliases into canonical parser syntax.
 
-    User-facing example:
-        forest &&(wolf*1.5 | hunter*0.8) fog
-
-    Canonical output:
-        forest CHUNK{wolf*1.5 | hunter*0.8} fog
-
-    This file does not modify prompt_parser_21.py.
-    It translates before parser/runtime calls.
+    Examples:
+        <+>(a | b)      -> BLEND{a | b}
+        BLEND(a | b)   -> BLEND{a | b}
+        BLEND{a | b}   -> unchanged
     """
 
-    def __init__(self, config: PromptSymbolConfig | None = None):
-        self.config = config or PromptSymbolConfig.default()
+    def __init__(self, config: PromptSymbolConfig):
+        self.config = config
         self.config.validate()
 
     @classmethod
@@ -138,69 +203,83 @@ class PromptSymbolInterpreter:
         if not prompt:
             return prompt
 
-        text = prompt
-
+        text = str(prompt)
         text = self._translate_backend_blocks(text)
-
-        # Optional future hook:
-        # text = self._translate_sequence_symbols(text)
-
         return text
 
     def _translate_backend_blocks(self, text: str) -> str:
-        symbols = self.config.backend_symbols
-        open_wrap = self.config.backend_wrappers.get("open", "(")
-        close_wrap = self.config.backend_wrappers.get("close", ")")
+        open_wrap = self.config.wrapper_open()
+        close_wrap = self.config.wrapper_close()
 
+        # Longest aliases first prevents "::" before ":::"-style issues
+        # and prevents shorter symbolic aliases from partially matching longer ones.
         for key in ("assemble", "chunk", "blend", "morph", "pool"):
-            symbol = symbols.get(key)
-            if not symbol:
-                continue
+            canonical = self.config.backend_canonical(key)
+            aliases = sorted(self.config.backend_aliases(key), key=len, reverse=True)
 
-            canonical = CANONICAL_BACKEND[key]
-            text = self._replace_wrapped_operator(
-                text=text,
-                symbol=symbol,
-                canonical=canonical,
-                open_wrap=open_wrap,
-                close_wrap=close_wrap,
-                canonical_open="{",
-                canonical_close="}",
-            )
+            for alias in aliases:
+                text = self._replace_wrapped_operator(
+                    text=text,
+                    alias=alias,
+                    canonical=canonical,
+                    open_wrap=open_wrap,
+                    close_wrap=close_wrap,
+                    canonical_open="{",
+                    canonical_close="}",
+                )
 
         text = self._translate_bind(text)
-
         return text
 
     def _translate_bind(self, text: str) -> str:
-        """
-        Converts:
-            =>(owner: attrs)
-            =>^1.2(owner: attrs)
-
-        Into:
-            BIND{owner => attrs}
-            BIND^1.2{owner => attrs}
-
-        This avoids ambiguity with the internal BIND arrow.
-        """
-        symbol = self.config.backend_symbols.get("bind", "=>")
-        if not symbol:
+        aliases = sorted(self.config.backend_aliases("bind"), key=len, reverse=True)
+        if not aliases:
             return text
 
-        open_wrap = self.config.backend_wrappers.get("open", "(")
-        close_wrap = self.config.backend_wrappers.get("close", ")")
+        open_wrap = self.config.wrapper_open()
+        close_wrap = self.config.wrapper_close()
+        canonical = self.config.backend_canonical("bind")
 
+        for alias in aliases:
+            text = self._replace_bind_alias(
+                text=text,
+                alias=alias,
+                canonical=canonical,
+                open_wrap=open_wrap,
+                close_wrap=close_wrap,
+            )
+
+        return text
+
+    def _replace_bind_alias(
+        self,
+        *,
+        text: str,
+        alias: str,
+        canonical: str,
+        open_wrap: str,
+        close_wrap: str,
+    ) -> str:
         i = 0
         out: list[str] = []
 
         while i < len(text):
-            if not self._matches_unescaped(text, i, symbol):
+            if not self._matches_alias_at(text, i, alias):
                 out.append(text[i])
                 i += 1
                 continue
 
-            j = i + len(symbol)
+            j = i + len(alias)
+
+            # Do not rewrite existing canonical BIND{...}
+            k = j
+            while k < len(text) and text[k].isspace():
+                k += 1
+            if k < len(text) and text[k] == "{":
+                out.append(text[i])
+                i += 1
+                continue
+
             weight = ""
 
             if j < len(text) and text[j] == "^":
@@ -232,48 +311,48 @@ class PromptSymbolInterpreter:
                 i = end + 1
                 continue
 
-            out.append(f"BIND{weight}{{{owner} => {attrs}}}")
+            out.append(f"{canonical}{weight}{{{owner} => {attrs}}}")
             i = end + 1
 
         return "".join(out)
 
     def _replace_wrapped_operator(
         self,
+        *,
         text: str,
-        symbol: str,
+        alias: str,
         canonical: str,
         open_wrap: str,
         close_wrap: str,
         canonical_open: str,
         canonical_close: str,
     ) -> str:
-        """
-        Converts:
-            SYMBOL(...)
-            SYMBOL^1.2(...)
-            SYMBOL[mode](...)
-
-        Into:
-            CANONICAL{...}
-            CANONICAL^1.2{...}
-            CANONICAL[mode]{...}
-        """
         i = 0
         out: list[str] = []
 
         while i < len(text):
-            if not self._matches_unescaped(text, i, symbol):
+            if not self._matches_alias_at(text, i, alias):
                 out.append(text[i])
                 i += 1
                 continue
 
-            j = i + len(symbol)
+            j = i + len(alias)
+
+            # Already canonical block form, e.g. BLEND{a | b}
+            k = j
+            while k < len(text) and text[k].isspace():
+                k += 1
+            if k < len(text) and text[k] == canonical_open:
+                out.append(text[i])
+                i += 1
+                continue
+
             modifiers = ""
 
             while j < len(text) and text[j].isspace():
                 j += 1
 
-            # Preserve modifiers like ^1.4, [mean@pooled], @cross, [5-12]
+            # Preserve modifiers like ^1.4, [mean@pooled], @cross, [5-12].
             while j < len(text) and text[j] != open_wrap:
                 if text[j].isspace():
                     j += 1
@@ -315,15 +394,6 @@ class PromptSymbolInterpreter:
 
     @staticmethod
     def _split_bind_body(body: str) -> tuple[str, str]:
-        """
-        Supports:
-            owner: attrs
-            owner -> attrs
-            owner => attrs
-
-        Returns:
-            owner, attrs
-        """
         for sep in ("=>", "->", ":"):
             idx = _find_top_level_separator(body, sep)
             if idx != -1:
@@ -332,8 +402,8 @@ class PromptSymbolInterpreter:
         return "", ""
 
     @staticmethod
-    def _matches_unescaped(text: str, index: int, symbol: str) -> bool:
-        if not text.startswith(symbol, index):
+    def _matches_alias_at(text: str, index: int, alias: str) -> bool:
+        if not text.startswith(alias, index):
             return False
 
         slash_count = 0
@@ -342,7 +412,22 @@ class PromptSymbolInterpreter:
             slash_count += 1
             j -= 1
 
-        return slash_count % 2 == 0
+        if slash_count % 2 != 0:
+            return False
+
+        # Word aliases like BLEND should not match inside MYBLEND or BLENDER.
+        if alias and (alias[0].isalnum() or alias[0] == "_"):
+            prev_ch = text[index - 1] if index > 0 else ""
+            if prev_ch and (prev_ch.isalnum() or prev_ch == "_"):
+                return False
+
+        end = index + len(alias)
+        if alias and (alias[-1].isalnum() or alias[-1] == "_"):
+            next_ch = text[end] if end < len(text) else ""
+            if next_ch and (next_ch.isalnum() or next_ch == "_"):
+                return False
+
+        return True
 
     @staticmethod
     def _find_matching(
@@ -373,18 +458,44 @@ class PromptSymbolInterpreter:
         return None
 
 
+
 def to_canonical_prompt(
     prompt: str,
-    config: PromptSymbolConfig | dict[str, Any] | None = None,
+    config: PromptSymbolConfig | dict[str, Any],
 ) -> str:
     if isinstance(config, dict):
         config = PromptSymbolConfig.from_dict(config)
+
+    if config is None:
+        raise ValueError("A prompt symbol config is required.")
 
     return PromptSymbolInterpreter(config).to_canonical(prompt)
 
 
 def load_interpreter_from_yaml(path: str | Path) -> PromptSymbolInterpreter:
     return PromptSymbolInterpreter.from_yaml(path)
+
+
+def _parse_operator_section(
+    data: dict[str, Any],
+    section_name: str,
+) -> dict[str, OperatorSpec]:
+    section = data.get(section_name, {})
+    if not isinstance(section, dict):
+        raise ValueError(f"{section_name} must be a dictionary.")
+
+    parsed: dict[str, OperatorSpec] = {}
+
+    for name, value in section.items():
+        if not isinstance(value, dict):
+            raise ValueError(f"{section_name}.{name} must be a dictionary.")
+
+        parsed[str(name)] = OperatorSpec.from_dict(
+            f"{section_name}.{name}",
+            value,
+        )
+
+    return parsed
 
 
 def _find_top_level_separator(text: str, sep: str) -> int:
@@ -421,38 +532,105 @@ def _find_top_level_separator(text: str, sep: str) -> int:
 
     return -1
 
+_OPERATOR_SECTIONS = (
+    "reserved_symbols",
+    "backend_operators",
+    "sequence_operators",
+    "grouping_operators",
+    "branch_operators",
+    "weight_operators",
+    "transition_operators",
+)
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    result = dict(base)
+
+def _deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
 
     for key, value in override.items():
         if (
-            key in result
-            and isinstance(result[key], dict)
+            key in merged
+            and isinstance(merged[key], dict)
             and isinstance(value, dict)
         ):
-            result[key] = _deep_merge(result[key], value)
+            merged[key] = _deep_merge_dicts(merged[key], value)
         else:
-            result[key] = value
+            merged[key] = deepcopy(value)
 
-    return result
+    return merged
 
 
-'''
-if __name__ == "__main__":
-    interpreter = PromptSymbolInterpreter()
+def _collect_user_alias_claims(user_data: dict[str, Any]) -> dict[str, str]:
+    claims: dict[str, str] = {}
 
-    examples = [
-        "forest &&(wolf*1.5 | hunter*0.8) fog",
-        "portrait <>(photo realism*0.7 | oil painting*0.3)",
-        "portrait >>^1.4@cross(human*0.8 => cyborg*1.3@0.6 ~ bezier)",
-        "@@(enc1=wolf; enc2=moonlit forest; pooled=cold atmosphere)",
-        "1girl, street scene =>(1boy: red eyes, pink scarf)",
-        "$$(cold ominous atmosphere)",
-    ]
+    for section_name in _OPERATOR_SECTIONS:
+        section = user_data.get(section_name, {})
+        if not isinstance(section, dict):
+            continue
 
-    for example in examples:
-        print("USER:     ", example)
-        print("CANONICAL:", interpreter.to_canonical(example))
-        print()
-'''
+        for op_name, spec in section.items():
+            if not isinstance(spec, dict):
+                continue
+
+            full_name = f"{section_name}.{op_name}"
+            aliases = spec.get("aliases", [])
+
+            for alias in aliases:
+                alias = str(alias).strip()
+                if alias:
+                    claims[alias] = full_name
+
+            default_symbol = str(spec.get("default_symbol", "")).strip()
+            if default_symbol:
+                claims[default_symbol] = full_name
+
+    return claims
+
+
+def _apply_user_alias_priority(
+    merged: dict[str, Any],
+    user_data: dict[str, Any],
+) -> dict[str, Any]:
+    claims = _collect_user_alias_claims(user_data)
+
+    reserved = merged.get("reserved_symbols", {})
+    reserved_aliases = set()
+
+    for spec in reserved.values():
+        if isinstance(spec, dict):
+            reserved_aliases.update(str(a) for a in spec.get("aliases", []) if str(a))
+            if spec.get("default_symbol"):
+                reserved_aliases.add(str(spec["default_symbol"]))
+
+    for section_name in _OPERATOR_SECTIONS:
+        section = merged.get(section_name, {})
+        if not isinstance(section, dict):
+            continue
+
+        for op_name, spec in section.items():
+            if not isinstance(spec, dict):
+                continue
+
+            full_name = f"{section_name}.{op_name}"
+
+            if section_name == "reserved_symbols":
+                continue
+
+            aliases = [str(a) for a in spec.get("aliases", []) if str(a)]
+            aliases = [
+                alias
+                for alias in aliases
+                if alias not in claims
+                or claims[alias] == full_name
+                or alias in reserved_aliases
+            ]
+
+            spec["aliases"] = aliases
+
+            default_symbol = str(spec.get("default_symbol", "")).strip()
+            if default_symbol and default_symbol not in aliases:
+                if aliases:
+                    spec["default_symbol"] = aliases[0]
+                else:
+                    spec["default_symbol"] = str(spec.get("canonical", op_name)).strip()
+
+    return merged

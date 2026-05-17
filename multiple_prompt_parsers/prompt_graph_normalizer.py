@@ -54,18 +54,6 @@ class GraphNormalizationError(Exception):
 
 
 def normalize_graph(graph: PromptGraph) -> PromptGraph:
-    """
-    Entry point.
-
-    Performs:
-    - recursive normalization
-    - backend lifting
-    - sequence flattening
-    - redundant group removal
-    - whitespace cleanup
-    - implicit branch propagation
-    """
-
     normalized_root = normalize_node(graph.root)
 
     return PromptGraph(
@@ -77,10 +65,6 @@ def normalize_graph(graph: PromptGraph) -> PromptGraph:
 
 
 def normalize_node(node: PromptNode) -> PromptNode:
-    """
-    Main recursive dispatcher.
-    """
-
     if isinstance(node, TextNode):
         return _normalize_text(node)
 
@@ -129,7 +113,7 @@ def normalize_node(node: PromptNode) -> PromptNode:
 
 
 def _normalize_text(node: TextNode) -> TextNode:
-    text = " ".join(node.text.split())
+    text = " ".join(str(node.text).split())
 
     return TextNode(
         text=text,
@@ -138,7 +122,7 @@ def _normalize_text(node: TextNode) -> TextNode:
 
 
 def _normalize_sequence(node: SequenceNode) -> PromptNode:
-    normalized_parts = []
+    normalized_parts: list[PromptNode] = []
 
     for part in node.parts:
         normalized = normalize_node(part)
@@ -146,18 +130,15 @@ def _normalize_sequence(node: SequenceNode) -> PromptNode:
         if _is_empty_node(normalized):
             continue
 
-        # flatten nested sequences
         if isinstance(normalized, SequenceNode):
             normalized_parts.extend(normalized.parts)
             continue
 
         normalized_parts.append(normalized)
 
-    # remove empty sequence
     if not normalized_parts:
         return TextNode("")
 
-    # single-child collapse
     if len(normalized_parts) == 1:
         return normalized_parts[0]
 
@@ -167,11 +148,7 @@ def _normalize_sequence(node: SequenceNode) -> PromptNode:
         meta=node.meta,
     )
 
-    # IMPORTANT:
-    # Backend lifting happens AFTER flattening
-    lifted = _lift_backend_nodes(sequence)
-
-    return lifted
+    return _lift_backend_nodes(sequence)
 
 
 def _normalize_group(node: GroupNode) -> PromptNode:
@@ -181,8 +158,8 @@ def _normalize_group(node: GroupNode) -> PromptNode:
     ]
 
     normalized_parts = [
-        p for p in normalized_parts
-        if not _is_empty_node(p)
+        part for part in normalized_parts
+        if not _is_empty_node(part)
     ]
 
     if not normalized_parts:
@@ -191,9 +168,10 @@ def _normalize_group(node: GroupNode) -> PromptNode:
     if len(normalized_parts) == 1:
         child = normalized_parts[0]
 
-        # remove redundant nested groups
         if isinstance(child, GroupNode):
             return child
+
+        return child
 
     group = GroupNode(
         parts=normalized_parts,
@@ -201,25 +179,22 @@ def _normalize_group(node: GroupNode) -> PromptNode:
         meta=node.meta,
     )
 
-    lifted = _lift_backend_nodes(group)
-
-    return lifted
+    return _lift_backend_nodes(group)
 
 
 def _normalize_weight(node: WeightNode) -> PromptNode:
     normalized_child = normalize_node(node.node)
 
-    # weight 1.0 is redundant
+    if _is_empty_node(normalized_child):
+        return TextNode("")
+
     if abs(node.weight - 1.0) < 1e-8:
         return normalized_child
 
-    # merge nested weights
     if isinstance(normalized_child, WeightNode):
-        combined = node.weight * normalized_child.weight
-
         return WeightNode(
             node=normalized_child.node,
-            weight=combined,
+            weight=node.weight * normalized_child.weight,
             mode=node.mode,
             meta=node.meta,
         )
@@ -244,8 +219,8 @@ def _normalize_alternate(node: AlternateNode) -> PromptNode:
     ]
 
     options = [
-        o for o in options
-        if not _is_empty_node(o)
+        option for option in options
+        if not _is_empty_node(option)
     ]
 
     if not options:
@@ -267,6 +242,9 @@ def _normalize_schedule(node: ScheduleNode) -> PromptNode:
     for segment in node.segments:
         normalized_child = normalize_node(segment.node)
 
+        if _is_empty_node(normalized_child):
+            continue
+
         segments.append(
             segment.__class__(
                 node=normalized_child,
@@ -275,6 +253,9 @@ def _normalize_schedule(node: ScheduleNode) -> PromptNode:
                 weight=segment.weight,
             )
         )
+
+    if not segments:
+        return TextNode("")
 
     return ScheduleNode(
         segments=segments,
@@ -322,6 +303,9 @@ def _normalize_blend(node: BlendNode) -> PromptNode:
     for branch in node.branches:
         normalized = normalize_node(branch.node)
 
+        if _is_empty_node(normalized):
+            continue
+
         branches.append(
             BackendBranch(
                 node=normalized,
@@ -332,7 +316,7 @@ def _normalize_blend(node: BlendNode) -> PromptNode:
 
     if len(branches) < 2:
         raise GraphNormalizationError(
-            "BLEND requires at least 2 branches"
+            "BLEND requires at least 2 non-empty branches"
         )
 
     return BlendNode(
@@ -351,6 +335,9 @@ def _normalize_chunk(node: ChunkNode) -> PromptNode:
     for branch in node.branches:
         normalized = normalize_node(branch.node)
 
+        if _is_empty_node(normalized):
+            continue
+
         branches.append(
             BackendBranch(
                 node=normalized,
@@ -359,9 +346,13 @@ def _normalize_chunk(node: ChunkNode) -> PromptNode:
             )
         )
 
+    if not branches:
+        return TextNode("")
+
     return ChunkNode(
         branches=branches,
         shared_channel=node.shared_channel,
+        mode=node.mode,
         meta=node.meta,
     )
 
@@ -372,12 +363,20 @@ def _normalize_morph(node: MorphNode) -> PromptNode:
     for point in node.points:
         normalized = normalize_node(point.node)
 
+        if _is_empty_node(normalized):
+            continue
+
         points.append(
             MorphPoint(
                 node=normalized,
                 boundary=point.boundary,
                 weight=point.weight,
             )
+        )
+
+    if len(points) < 2:
+        raise GraphNormalizationError(
+            "MORPH requires at least 2 non-empty points"
         )
 
     return MorphNode(
@@ -395,8 +394,12 @@ def _normalize_morph(node: MorphNode) -> PromptNode:
 def _normalize_pool(node: PoolNode) -> PromptNode:
     normalized = normalize_node(node.node)
 
+    if _is_empty_node(normalized):
+        return TextNode("")
+
     return PoolNode(
         node=normalized,
+        mode=node.mode,
         meta=node.meta,
     )
 
@@ -405,10 +408,16 @@ def _normalize_bind(node: BindNode) -> PromptNode:
     owner = normalize_node(node.owner)
     attrs = normalize_node(node.attrs)
 
+    if _is_empty_node(owner) or _is_empty_node(attrs):
+        raise GraphNormalizationError(
+            "BIND requires non-empty owner and attrs"
+        )
+
     return BindNode(
         owner=owner,
         attrs=attrs,
         weight=node.weight,
+        mode=node.mode,
         meta=node.meta,
     )
 
@@ -417,14 +426,22 @@ def _normalize_assemble(node: AssembleNode) -> PromptNode:
     enc1 = normalize_node(node.enc1)
     enc2 = normalize_node(node.enc2)
 
+    if _is_empty_node(enc1) or _is_empty_node(enc2):
+        raise GraphNormalizationError(
+            "ASSEMBLE requires non-empty enc1 and enc2"
+        )
+
     pooled = None
     if node.pooled is not None:
         pooled = normalize_node(node.pooled)
+        if _is_empty_node(pooled):
+            pooled = None
 
     return AssembleNode(
         enc1=enc1,
         enc2=enc2,
         pooled=pooled,
+        mode=node.mode,
         meta=node.meta,
     )
 
@@ -436,21 +453,22 @@ def _normalize_assemble(node: AssembleNode) -> PromptNode:
 
 def _lift_backend_nodes(node: PromptNode) -> PromptNode:
     """
-    Core feature.
+    Lift branch-style backend nodes out of regular prompt context.
 
-    Converts:
-
+    Example:
         {portrait BLEND{realism | oil}}
 
-    into:
+    Becomes:
+        BLEND{portrait realism | portrait oil}
 
-        BLEND{
-            portrait realism |
-            portrait oil
-        }
+    Only branch-style backends are lifted:
+        BLEND
+        CHUNK
+        MORPH
 
-    This solves the '_21 top-level backend restriction'
-    without changing user syntax.
+    POOL, BIND, and ASSEMBLE are deliberately not context-lifted here because
+    moving surrounding text into those nodes can change channel semantics. Those
+    cases should be handled by graph lowering as multi-call execution.
     """
 
     if isinstance(node, SequenceNode):
@@ -462,22 +480,21 @@ def _lift_backend_nodes(node: PromptNode) -> PromptNode:
     else:
         return node
 
-    backend_indices = []
+    liftable_indices = [
+        index
+        for index, part in enumerate(parts)
+        if _is_context_liftable_backend_node(part)
+    ]
 
-    for i, part in enumerate(parts):
-        if _is_backend_node(part):
-            backend_indices.append(i)
-
-    if not backend_indices:
+    if not liftable_indices:
         return node
 
-    if len(backend_indices) > 1:
+    if len(liftable_indices) > 1:
         raise GraphNormalizationError(
-            "Multiple backend nodes in same branch are ambiguous"
+            "Multiple liftable backend nodes in the same branch are ambiguous"
         )
 
-    backend_index = backend_indices[0]
-
+    backend_index = liftable_indices[0]
     backend = parts[backend_index]
 
     prefix = parts[:backend_index]
@@ -512,19 +529,16 @@ def _lift_blend(
     prefix: list[PromptNode],
     suffix: list[PromptNode],
 ) -> BlendNode:
-
     lifted_branches = []
 
     for branch in backend.branches:
-        new_sequence = _merge_context_into_branch(
-            prefix,
-            branch.node,
-            suffix,
-        )
-
         lifted_branches.append(
             BackendBranch(
-                node=new_sequence,
+                node=_normalize_lifted_context(
+                    prefix,
+                    branch.node,
+                    suffix,
+                ),
                 weight=branch.weight,
                 label=branch.label,
             )
@@ -545,19 +559,16 @@ def _lift_chunk(
     prefix: list[PromptNode],
     suffix: list[PromptNode],
 ) -> ChunkNode:
-
     lifted_branches = []
 
     for branch in backend.branches:
-        new_sequence = _merge_context_into_branch(
-            prefix,
-            branch.node,
-            suffix,
-        )
-
         lifted_branches.append(
             BackendBranch(
-                node=new_sequence,
+                node=_normalize_lifted_context(
+                    prefix,
+                    branch.node,
+                    suffix,
+                ),
                 weight=branch.weight,
                 label=branch.label,
             )
@@ -566,6 +577,7 @@ def _lift_chunk(
     return ChunkNode(
         branches=lifted_branches,
         shared_channel=backend.shared_channel,
+        mode=backend.mode,
         meta=backend.meta,
     )
 
@@ -575,19 +587,16 @@ def _lift_morph(
     prefix: list[PromptNode],
     suffix: list[PromptNode],
 ) -> MorphNode:
-
     lifted_points = []
 
     for point in backend.points:
-        new_sequence = _merge_context_into_branch(
-            prefix,
-            point.node,
-            suffix,
-        )
-
         lifted_points.append(
             MorphPoint(
-                node=new_sequence,
+                node=_normalize_lifted_context(
+                    prefix,
+                    point.node,
+                    suffix,
+                ),
                 boundary=point.boundary,
                 weight=point.weight,
             )
@@ -610,21 +619,42 @@ def _lift_morph(
 # ============================================================================
 
 
+def _normalize_lifted_context(
+    prefix: list[PromptNode],
+    center: PromptNode,
+    suffix: list[PromptNode],
+) -> PromptNode:
+    merged = _merge_context_into_branch(
+        prefix,
+        center,
+        suffix,
+    )
+
+    return normalize_node(merged)
+
+
 def _merge_context_into_branch(
     prefix: list[PromptNode],
     center: PromptNode,
     suffix: list[PromptNode],
 ) -> PromptNode:
+    parts: list[PromptNode] = []
 
-    parts = []
-
-    for p in prefix:
-        parts.append(deepcopy(p))
+    for item in prefix:
+        parts.append(deepcopy(item))
 
     parts.append(deepcopy(center))
 
-    for s in suffix:
-        parts.append(deepcopy(s))
+    for item in suffix:
+        parts.append(deepcopy(item))
+
+    parts = [
+        part for part in parts
+        if not _is_empty_node(part)
+    ]
+
+    if not parts:
+        return TextNode("")
 
     if len(parts) == 1:
         return parts[0]
@@ -635,12 +665,36 @@ def _merge_context_into_branch(
     )
 
 
+def _is_context_liftable_backend_node(node: PromptNode) -> bool:
+    return isinstance(
+        node,
+        (
+            BlendNode,
+            ChunkNode,
+            MorphNode,
+        ),
+    )
+
+
 def _is_backend_node(node: PromptNode) -> bool:
     return node.kind in {
         PromptNodeKind.BLEND,
         PromptNodeKind.CHUNK,
         PromptNodeKind.MORPH,
+        PromptNodeKind.POOL,
+        PromptNodeKind.BIND,
+        PromptNodeKind.ASSEMBLE,
     }
+
+
+def _contains_backend_node(node: PromptNode) -> bool:
+    if _is_backend_node(node):
+        return True
+
+    return any(
+        _contains_backend_node(child)
+        for child in node.children()
+    )
 
 
 def _is_empty_node(node: PromptNode) -> bool:
@@ -652,5 +706,14 @@ def _is_empty_node(node: PromptNode) -> bool:
 
     if isinstance(node, GroupNode):
         return len(node.parts) == 0
+
+    if isinstance(node, AlternateNode):
+        return len(node.options) == 0
+
+    if isinstance(node, ScheduleNode):
+        return len(node.segments) == 0
+
+    if isinstance(node, AndNode):
+        return len(node.branches) == 0
 
     return False

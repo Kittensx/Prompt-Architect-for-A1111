@@ -1,32 +1,282 @@
-# prompt_symbols.yaml
+version: 2
+
+# ============================================================================
+# RESERVED SYMBOLS
+# ============================================================================
+#
+# Symbols reserved for external systems or future parser namespaces.
+# These should NEVER be reused by backend operators.
+#
+# semantic_prompt reserves %%
+#
+# ============================================================================
 
 reserved_symbols:
-  semantic_prompt: "%%"
+  semantic_prompt:
+    aliases:
+      - "%%"
 
-backend_symbols:
-  chunk: "&&"
-  blend: "<+>"
-  morph: ">>"
-  assemble: "@@"
-  bind: "=>"
-  pool: "$$"
+# ============================================================================
+# BACKEND OPERATORS
+# ============================================================================
+#
+# canonical:
+#   Internal normalized backend name.
+#
+# default_symbol:
+#   Preferred shorthand symbol shown to users/examples.
+#
+# aliases:
+#   All accepted input spellings.
+#
+# The parser/interpreter should accept ANY alias and normalize internally
+# into the canonical backend form.
+#
+# Example:
+#
+#   <+>(a | b)
+#   BLEND{a | b}
+#
+# both normalize internally into:
+#
+#   BLEND{a | b}
+#
+# ============================================================================
 
-backend_wrappers:
-  open: "("
-  close: ")"
+backend_operators:
 
-sequence_symbols:
-  group_open: "{"
-  group_close: "}"
+  blend:
+    canonical: "BLEND"
+    default_symbol: "<+>"
+    aliases:
+      - "<+>"
+      - "BLEND"
 
-  # property sequence
-  sequence: "::"
+  chunk:
+    canonical: "CHUNK"
+    default_symbol: "&&"
+    aliases:
+      - "&&"
+      - "CHUNK"
 
-  # top-level ownership/grouping sequence
-  deep_sequence: ":::"
+  morph:
+    canonical: "MORPH"
+    default_symbol: ">>"
+    aliases:
+      - ">>"
+      - "MORPH"
 
-  # closes current sequence
-  close: "!"
+  pool:
+    canonical: "POOL"
+    default_symbol: "$$"
+    aliases:
+      - "$$"
+      - "POOL"
 
-  # fully closes top-level sequence
-  top_close: "!!"
+  bind:
+    canonical: "BIND"
+    default_symbol: "=>"
+    aliases:
+      - "=>"
+      - "BIND"
+
+  assemble:
+    canonical: "ASSEMBLE"
+    default_symbol: "@@"
+    aliases:
+      - "@@"
+      - "ASSEMBLE"
+
+# ============================================================================
+# SEQUENCE OPERATORS
+# ============================================================================
+#
+# These are parser-level sequence/grouping operators.
+#
+# canonical:
+#   Internal normalized sequence token.
+#
+# default_symbol:
+#   Preferred user shorthand.
+#
+# aliases:
+#   All accepted spellings.
+#
+# ============================================================================
+
+sequence_operators:
+
+  sequence:
+    canonical: "SEQUENCE"
+    default_symbol: "::"
+    aliases:
+      - "::"
+      - "SEQUENCE"
+
+  deep_sequence:
+    canonical: "DEEP_SEQUENCE"
+    default_symbol: ":::"
+    aliases:
+      - ":::"
+      - "DEEP_SEQUENCE"
+
+  close:
+    canonical: "CLOSE"
+    default_symbol: "!"
+    aliases:
+      - "!"
+      - "CLOSE"
+
+  top_close:
+    canonical: "TOP_CLOSE"
+    default_symbol: "!!"
+    aliases:
+      - "!!"
+      - "TOP_CLOSE"
+
+# ============================================================================
+# GROUPING OPERATORS
+# ============================================================================
+#
+# These are structural parser operators.
+#
+# ============================================================================
+
+grouping_operators:
+
+  open_group:
+    canonical: "OPEN_GROUP"
+    default_symbol: "{"
+    aliases:
+      - "{"
+
+  close_group:
+    canonical: "CLOSE_GROUP"
+    default_symbol: "}"
+    aliases:
+      - "}"
+
+  open_attention:
+    canonical: "OPEN_ATTENTION"
+    default_symbol: "("
+    aliases:
+      - "("
+
+  close_attention:
+    canonical: "CLOSE_ATTENTION"
+    default_symbol: ")"
+    aliases:
+      - ")"
+
+  open_schedule:
+    canonical: "OPEN_SCHEDULE"
+    default_symbol: "["
+    aliases:
+      - "["
+
+  close_schedule:
+    canonical: "CLOSE_SCHEDULE"
+    default_symbol: "]"
+    aliases:
+      - "]"
+
+# ============================================================================
+# BRANCH / PIPE OPERATORS
+# ============================================================================
+#
+# Used for backend branches and alternates.
+#
+# ============================================================================
+
+branch_operators:
+
+  branch_separator:
+    canonical: "BRANCH_SEPARATOR"
+    default_symbol: "|"
+    aliases:
+      - "|"
+
+  and_operator:
+    canonical: "AND"
+    default_symbol: "AND"
+    aliases:
+      - "AND"
+
+# ============================================================================
+# WEIGHT / SCHEDULING OPERATORS
+# ============================================================================
+#
+# ============================================================================
+
+weight_operators:
+
+  weight:
+    canonical: "WEIGHT"
+    default_symbol: "*"
+    aliases:
+      - "*"
+
+  attention_weight:
+    canonical: "ATTENTION_WEIGHT"
+    default_symbol: ":"
+    aliases:
+      - ":"
+
+  morph_boundary:
+    canonical: "MORPH_BOUNDARY"
+    default_symbol: "@"
+    aliases:
+      - "@"
+
+# ============================================================================
+# TRANSITION OPERATORS
+# ============================================================================
+#
+# ============================================================================
+
+transition_operators:
+
+  morph_transition:
+    canonical: "MORPH_TRANSITION"
+    default_symbol: "=>"
+    aliases:
+      - "=>"
+
+# ============================================================================
+# ESCAPING
+# ============================================================================
+#
+# ============================================================================
+
+escaping:
+  escape_character: "\\"
+
+# ============================================================================
+# SERIALIZATION PREFERENCES
+# ============================================================================
+#
+# Determines how graphs serialize back to text.
+#
+# serializer_mode:
+#
+#   canonical
+#       Always serialize as BLEND{}, CHUNK{}, etc.
+#
+#   default_symbol
+#       Serialize using the configured default symbols.
+#
+# ============================================================================
+
+serialization:
+  serializer_mode: "canonical"
+
+# ============================================================================
+# VALIDATION
+# ============================================================================
+#
+# ============================================================================
+
+validation:
+  allow_alias_collisions: false
+  allow_reserved_symbol_override: false
+  strict_backend_keywords: false

@@ -299,6 +299,23 @@ class PromptGraphExecutor:
             metadata=call.metadata,
         )
 
+        conditioning.source_id = call.call_id
+
+        conditioning.metadata.setdefault(
+            "prompt",
+            call.prompt,
+        )
+
+        conditioning.metadata.setdefault(
+            "prompt_call_kind",
+            call.kind.value,
+        )
+
+        conditioning.metadata.setdefault(
+            "backend_name",
+            self.ctx.backend.backend_name,
+        )
+
         result = ExecutionResult(
             result_id=call.call_id,
             conditioning=conditioning,
@@ -390,12 +407,22 @@ class PromptGraphExecutor:
                 f"Unsupported merge op: {op.mode!r}"
             )
 
+        conditioning.source_id = op.op_id
+
+        conditioning.metadata.setdefault(
+            "merge_mode",
+            op.mode.value,
+        )
+
+        conditioning.metadata.update(op.metadata)
+
         return ExecutionResult(
             result_id=op.op_id,
             conditioning=conditioning,
             success=True,
             metadata={
                 "op_mode": op.mode.value,
+                **op.metadata,
             },
         )
 
@@ -411,6 +438,8 @@ class PromptGraphExecutor:
         outputs = []
 
         for ref in refs:
+            if not ref.enabled:
+                continue
 
             result = self.ctx.results.get(ref.source_id)
 
@@ -425,7 +454,7 @@ class PromptGraphExecutor:
                     f"Dependency failed: "
                     f"{ref.source_id!r}"
                 )
-
+            
             conditioning = result.conditioning
 
             if conditioning is None:
@@ -434,17 +463,22 @@ class PromptGraphExecutor:
                     f"{ref.source_id!r}"
                 )
 
-            conditioning.metadata.setdefault(
-                "graph_weight",
-                ref.weight,
-            )
+            metadata = dict(conditioning.metadata)
 
-            conditioning.metadata.setdefault(
-                "graph_label",
-                ref.label,
-            )
+            metadata["graph_weight"] = ref.weight
 
-            outputs.append(conditioning)
+            if ref.label is not None:
+                metadata["graph_label"] = ref.label
+
+            outputs.append(
+                ConditioningOutput(
+                    source_id=conditioning.source_id,
+                    cross_attention=conditioning.cross_attention,
+                    pooled_output=conditioning.pooled_output,
+                    extra_channels=dict(conditioning.extra_channels),
+                    metadata=metadata,
+                )
+            )
 
         return outputs
 
@@ -469,11 +503,17 @@ class PromptGraphExecutor:
         call: PromptCall,
     ) -> str:
 
-        return (
-            f"{self.ctx.backend.backend_name}::"
-            f"{call.kind.value}::"
-            f"{call.negative_prompt}::"
-            f"{call.prompt}"
+        return "|".join(
+            [
+                str(self.ctx.backend.backend_name),
+                str(call.kind.value),
+                str(call.negative_prompt),
+                str(call.prompt),
+                str(call.steps),
+                str(call.width),
+                str(call.height),
+                repr(sorted(call.metadata.items())),
+            ]
         )
 
 
