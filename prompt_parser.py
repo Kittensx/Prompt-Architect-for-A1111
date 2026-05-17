@@ -1,3 +1,5 @@
+#A1111 stable version
+
 from __future__ import annotations
 
 import re
