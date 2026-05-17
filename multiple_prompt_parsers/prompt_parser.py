@@ -451,8 +451,18 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
             
             
             def alternate1(self, args):
-                # Randomly select one of the alternates
-                return random.choice(args)
+                options = []
+
+                for arg in args:
+                    if isinstance(arg, str):
+                        options.append(arg)
+                    else:
+                        try:
+                            options.append("".join(str(x) for x in arg))
+                        except TypeError:
+                            options.append(str(arg))
+
+                return random.choice(options)
             
             def alternate2(self, args):
                 # Resolve all alternates into a list
@@ -530,10 +540,30 @@ def get_learned_conditioning_prompt_schedules(prompts, base_steps, hires_steps=N
                 #handle plain text nodes
                 yield args[0].value
             def grouped(self, args):
-                ### Return the group as a cohesive string
-                ##return ", ".join(args)
-                # Combine all grouped elements into a single string
-                return f"{{{', '.join(args)}}}"
+                def flatten_to_text(value):
+                    if value is None:
+                        return ""
+
+                    if isinstance(value, str):
+                        return value
+
+                    if isinstance(value, lark.Token):
+                        return str(value)
+
+                    if isinstance(value, lark.Tree):
+                        return self._resolve_tree(value)
+
+                    try:
+                        return "".join(flatten_to_text(item) for item in value)
+                    except TypeError:
+                        return str(value)
+
+                resolved = [
+                    flatten_to_text(arg)
+                    for arg in args
+                ]
+
+                return "{" + ", ".join(resolved) + "}"
             def __default__(self, data, children, meta):
                 #handle all other nodes
                 for child in children:
